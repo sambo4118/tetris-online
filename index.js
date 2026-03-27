@@ -304,7 +304,6 @@ class Grid {
     }
 
     drawCells() {
-        this.drawGrid("#333333", 1);
         this.drawBorder("grey", 1);
         this.cells.forEach((row, i) => {
             row.forEach((cell, j) => {
