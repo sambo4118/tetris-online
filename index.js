@@ -14,6 +14,8 @@ class tetromino {
             this.loadTexture(texture);
         }
         this.active = true;
+        this.lockDelaySteps = 0;
+        this.maxLockDelaySteps = 3;
         if (!this.color && !this.texture) {
             this.color = this.shapeColor();
         }
@@ -23,7 +25,7 @@ class tetromino {
         // todo: load texture
     }
 
-    get matrix() {
+    matrix(rotation = this.rotation) {
         const shapes = {
         O: [[
             [1, 1],
@@ -121,9 +123,21 @@ class tetromino {
                 [1, 1],
                 [1, 0],
             ]
-        ]
+            ]
         }
-        return shapes[this.shape][this.rotation];
+        return shapes[this.shape][rotation];
+    }
+    get rotationNumber() {
+        const shapeRotationCounts = {
+            O: 1,
+            I: 2,
+            T: 4,
+            L: 4,
+            J: 4,
+            S: 2,
+            Z: 2
+        }
+        return shapeRotationCounts[this.shape];
     }
     shapeColor() {
         const shapeColors = {
@@ -139,7 +153,7 @@ class tetromino {
     }
 
     updateCells() {
-        this.matrix.forEach((row, i) => {
+        this.matrix().forEach((row, i) => {
             row.forEach((cell, j) => {
                 if (!cell) return;
 
@@ -164,11 +178,13 @@ class tetromino {
     }
 
     clearCells() {
-        this.matrix.forEach((row, i) => {
+        this.matrix().forEach((row, i) => {
             row.forEach((cell, j) => {
-            
+                
                 const gridX = this.x + j;
                 const gridY = this.y + i;
+                
+                if (this.grid.cells[gridY][gridX] !== this) return;
 
                 if (
                         gridY >= 0 &&
@@ -183,8 +199,8 @@ class tetromino {
     }
 
 
-    checkCollision(x = this.x, y = this.y) {
-        for (const [i, row] of this.matrix.entries()) {
+    checkCollision(x = this.x, y = this.y, rotation = this.rotation) {
+        for (const [i, row] of this.matrix(rotation).entries()) {
             for (const [j, cell] of row.entries()) {
                 if (!cell) continue;
                 const gridX = x + j;
@@ -204,7 +220,10 @@ class tetromino {
         const canMove = !this.checkCollision(this.x, this.y + 1);
         
         if (!canMove) {
-            this.active = false;
+            this.lockDelaySteps++;
+            if (this.lockDelaySteps >= this.maxLockDelaySteps) {
+                this.active = false;
+            }
             return;
         }
 
@@ -213,6 +232,22 @@ class tetromino {
         this.updateCells();
         this.grid.drawCells();
         
+    }
+
+    resetLockDelay() {
+        this.lockDelaySteps = 0;
+    }
+
+    hardDrop() {
+        if (!this.active) return;
+        
+        this.clearCells();
+        while (!this.checkCollision(this.x, this.y + 1)) {
+            this.y += 1;
+        }
+        this.updateCells();
+        this.grid.drawCells();
+        this.active = false;
     }
 
 }
@@ -227,25 +262,6 @@ class Grid {
         this.cols = cols;
         this.color = color;
         this.cells = Array.from({ length: rows }, () => Array(cols).fill(null));
-    }
-
-    drawGrid(color = this.color, width = 1) {
-        context.strokeStyle = color;
-        context.lineWidth = width;
-
-        for (let i = 1; i < this.rows; i++) {
-            context.beginPath();
-            context.moveTo(this.left, this.top + i * this.cellSize);
-            context.lineTo(this.left + this.width, this.top + i * this.cellSize);
-            context.stroke();
-        }
-
-        for (let i = 1; i < this.cols; i++) {
-            context.beginPath();
-            context.moveTo(this.left + i * this.cellSize, this.top);
-            context.lineTo(this.left + i * this.cellSize, this.top + this.height);
-            context.stroke();
-        }
     }
 
     drawBorder(color = this.color, width = 1) {
@@ -268,6 +284,23 @@ class Grid {
 
     get height() {
         return this.rows * this.cellSize;
+    }
+
+    clearLine(rowNumber) {
+        this.cells.splice(rowNumber, 1);
+        this.cells.unshift(Array(this.cols).fill(null));
+    }
+
+    checkLines() {
+        const fullRows = [];
+        for (let i = 0; i < this.rows; i++) {
+            const row = this.cells[i];
+            const isFull = row.every(cell => cell !== null && !cell.active);
+            if (isFull) {
+                fullRows.push(i);
+            }
+        }
+        return fullRows;
     }
 
     drawCells() {
@@ -310,15 +343,59 @@ function grabBagRandomShape(bag) {
 }
 
 playField = new Grid(canvas.width / 2, canvas.height / 2 + 50, 20, 20, 10);
-playField.drawGrid("#333333", 1);
 playField.drawBorder("grey", 1);
+
+// Hold grid - small 4x4 grid on the left side
+holdGrid = new Grid(canvas.width / 2 - 200, canvas.height / 2 - 100, 20, 4, 4);
+holdGrid.drawBorder("grey", 1);
+
 LastStepTime = Date.now();
 let bag = [];
+let heldPieceShape = null;
+let canHold = true;
 
 let currentPeice = new tetromino(grabBagRandomShape(bag), playField, "red", 4, 0);
 currentPeice.updateCells();
 
+drawHeldPiece();
+
 requestAnimationFrame(gameLoop);
+
+function drawHeldPiece() {
+    holdGrid.cells = Array.from({ length: 4 }, () => Array(4).fill(null));
+    
+    if (heldPieceShape) {
+        const tempPiece = new tetromino(heldPieceShape, holdGrid, null, 0, 0);
+        tempPiece.active = false;
+        tempPiece.updateCells();
+    }
+    
+    holdGrid.drawCells();
+}
+
+function holdPiece() {
+    if (!canHold || !currentPeice.active) return;
+    
+    currentPeice.clearCells();
+    const currentShape = currentPeice.shape;
+    
+    if (heldPieceShape === null) {
+        // First hold - store current piece and spawn new one
+        heldPieceShape = currentShape;
+        const shape = grabBagRandomShape(bag);
+        currentPeice = new tetromino(shape, playField, null, 4, 0);
+    } else {
+        // Swap current piece with held piece
+        const tempShape = heldPieceShape;
+        heldPieceShape = currentShape;
+        currentPeice = new tetromino(tempShape, playField, null, 4, 0);
+    }
+    
+    currentPeice.updateCells();
+    canHold = false;
+    drawHeldPiece();
+    playField.drawCells();
+}
 
 function gameLoop() {
     console.log("loop");
@@ -327,6 +404,7 @@ function gameLoop() {
             const shape = grabBagRandomShape(bag);
             currentPeice = new tetromino(shape, playField, null, 4, 0);
             currentPeice.updateCells();
+            canHold = true; // Reset hold ability for new piece
         }
         
         currentPeice.stepDown();
@@ -334,6 +412,10 @@ function gameLoop() {
         LastStepTime = Date.now();
     }
     
+    if (playField.checkLines().length > 0) {
+        playField.checkLines().forEach(row => playField.clearLine(row));
+        playField.drawCells();
+    }
 
     requestAnimationFrame(gameLoop);
 }
@@ -344,6 +426,7 @@ document.addEventListener("keydown", (key) => {
         if (!currentPeice.active) return;
         currentPeice.clearCells();
         currentPeice.x -= 1;
+        currentPeice.resetLockDelay();
         currentPeice.updateCells();
         playField.drawCells();
     }
@@ -353,6 +436,7 @@ document.addEventListener("keydown", (key) => {
         if (!currentPeice.active) return;
         currentPeice.clearCells();
         currentPeice.x += 1;
+        currentPeice.resetLockDelay();
         currentPeice.updateCells();
         playField.drawCells();
     }
@@ -362,18 +446,53 @@ document.addEventListener("keydown", (key) => {
         if (!currentPeice.active) return;
         currentPeice.clearCells();
         currentPeice.y += 1;
+        currentPeice.resetLockDelay();
         currentPeice.updateCells();
         playField.drawCells();
     }
 
     if (key.key === "ArrowUp") {
         if (!currentPeice.active) return;
-        const newRotation = (currentPeice.rotation + 1) % currentPeice.matrix.length;
-        if (currentPeice.checkCollision(currentPeice.x, currentPeice.y, newRotation)) return;
-        currentPeice.clearCells();
-        currentPeice.rotation = newRotation;
-        currentPeice.updateCells();
-        playField.drawCells();
+
+        const newRotation = (currentPeice.rotation + 1) % currentPeice.rotationNumber;
+        
+        const kickOffsets = [
+            [0, 0],
+            [-1, 0], 
+            [1, 0],
+            [2, 0],
+            [-2, 0],
+            [0, -1],
+            [-1, -1],
+            [1, -1],
+            [2, -1],
+            [0, -2],
+        ];
+
+        for (const [offsetX, offsetY] of kickOffsets) {
+            const testX = currentPeice.x + offsetX;
+            const testY = currentPeice.y + offsetY;
+            
+            if (!currentPeice.checkCollision(testX, testY, newRotation)) {
+
+                currentPeice.clearCells();
+                currentPeice.x = testX;
+                currentPeice.y = testY;
+                currentPeice.rotation = newRotation;
+                currentPeice.resetLockDelay();
+                currentPeice.updateCells();
+                playField.drawCells();
+                return;
+            }
+        }
+    }
+
+    if (key.key === " ") {
+        currentPeice.hardDrop();
+    }
+
+    if (key.key === "c" || key.key === "C") {
+        holdPiece();
     }
 
 });
