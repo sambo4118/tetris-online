@@ -188,13 +188,13 @@ class tetromino {
     }
     shapeColor() {
         const shapeColors = {
-            O: "yellow",
-            I: "cyan",
-            T: "purple",
-            L: "orange",
-            J: "blue",
-            S: "green",
-            Z: "red"
+            O: "#FFD500",
+            I: "#5fb0bd",
+            T: "#894086",
+            L: "#FF971C",
+            J: "#0341AE",
+            S: "#72CB3B",
+            Z: "#FF3213"
         }
         return shapeColors[this.shape];
     }
@@ -341,6 +341,28 @@ class Grid {
     drawActivePiece(piece) {
         if (!piece || !piece.active) return;
         const matrix = piece.matrix();
+
+        if (showGhost) {
+            const ghostY = getGhostY(piece);
+            if (ghostY !== piece.y) {
+                context.save();
+                context.beginPath();
+                context.rect(this.left, this.top, this.width, this.height);
+                context.clip();
+                context.globalAlpha = 0.25;
+                matrix.forEach((row, i) => {
+                    row.forEach((cell, j) => {
+                        if (!cell) return;
+                        const px = this.left + (piece.x + j) * this.cellSize;
+                        const py = this.top + (ghostY + i) * this.cellSize;
+                        context.fillStyle = piece.color;
+                        context.fillRect(px, py, this.cellSize, this.cellSize);
+                    });
+                });
+                context.restore();
+            }
+        }
+
         context.save();
         context.beginPath();
         context.rect(this.left, this.top, this.width, this.height);
@@ -398,11 +420,33 @@ class Score {
         this.linesCleared = 0;
         this.level = 1;
         this.displayScore = this.score;
+        this.combo = -1;
+        this.b2b = false;
     }
 
     addscore(lines) {
+        if (lines === 0) {
+            this.combo = -1;
+            return;
+        }
+
         const lineScores = [0, 100, 300, 500, 800];
-        this.score += lineScores[lines] * this.level;
+        let base = lineScores[lines] * this.level;
+
+        // Back-to-back bonus: consecutive Tetrises score 1.5x
+        if (lines === 4 && this.b2b) {
+            base = Math.floor(base * 1.5);
+        }
+        this.b2b = lines === 4;
+
+        this.score += base;
+
+        // Combo bonus: 50 * combo * level for each consecutive clear
+        this.combo++;
+        if (this.combo > 0) {
+            this.score += 50 * this.combo * this.level;
+        }
+
         this.linesCleared += lines;
         this.level = Math.floor(this.linesCleared / 10) + 1;
     }
@@ -411,16 +455,28 @@ class Score {
         if (this.displayScore < this.score) {
             this.displayScore = Math.min(this.displayScore + Math.ceil((this.score - this.displayScore) / 10), this.score);
         }
+        const comboText = this.combo > 0 ? `Combo x${this.combo}` : "";
+        const b2bText = this.b2b ? "B2B" : "";
         const scoreMetrics = this.context.measureText(`Score: ${this.displayScore}`);
         const linesMetrics = this.context.measureText(`Lines: ${this.linesCleared}`);
         const levelMetrics = this.context.measureText(`Level: ${this.level}`);
-        const maxWidth = Math.max(scoreMetrics.width, linesMetrics.width, levelMetrics.width);
-        this.context.clearRect(this.x, this.y - 20, this.x + maxWidth, this.y + 48);
+        const comboMetrics = this.context.measureText(comboText);
+        const b2bMetrics = this.context.measureText(b2bText);
+        const maxWidth = Math.max(scoreMetrics.width, linesMetrics.width, levelMetrics.width, comboMetrics.width, b2bMetrics.width);
+        this.context.clearRect(this.x, this.y - 20, this.x + maxWidth, this.y + 96);
         this.context.fillStyle = this.color;
         this.context.font = this.font;
         this.context.fillText(`${this.displayScore}`, this.x, this.y);
         this.context.fillText(`Lines: ${this.linesCleared}`, this.x, this.y + 24);
         this.context.fillText(`Level: ${this.level}`, this.x, this.y + 48);
+        if (comboText) {
+            this.context.fillStyle = "orange";
+            this.context.fillText(comboText, this.x, this.y + 72);
+        }
+        if (b2bText) {
+            this.context.fillStyle = "cyan";
+            this.context.fillText(b2bText, this.x, this.y + 96);
+        }
     }
 
 
@@ -464,6 +520,14 @@ function holdPiece() {
     drawHeldPiece();
     playField.drawCells();
     playField.drawActivePiece(currentPiece);
+}
+
+function getGhostY(piece) {
+    let ghostY = piece.y;
+    while (!piece.checkCollision(piece.x, ghostY + 1)) {
+        ghostY++;
+    }
+    return ghostY;
 }
 
 function drawNextPiece() {
@@ -558,6 +622,8 @@ let gameState = "menu";
 let menuSelection = 0;
 const menuItems = ["Play", "Options"];
 let startLevel = 1;
+let showGhost = true;
+let optionSelection = 0;
 
 function startGame() {
     context.fillStyle = "black";
@@ -571,6 +637,8 @@ function startGame() {
     scoreCounter.displayScore = 0;
     scoreCounter.linesCleared = (startLevel - 1) * 10;
     scoreCounter.level = startLevel;
+    scoreCounter.combo = -1;
+    scoreCounter.b2b = false;
     nextPieceShape = grabBagRandomShape(bag);
     const initialShape = grabBagRandomShape(bag);
     currentPiece = new tetromino(initialShape, playField, null, getSpawnX(initialShape), initialShape === "I" ? -1 : 0);
@@ -623,19 +691,27 @@ function drawOptions() {
 
     context.font = "bold 32px Arial";
     context.fillStyle = "cyan";
-    context.fillText("OPTIONS", canvas.width / 2, canvas.height / 2 - 100);
+    context.fillText("OPTIONS", canvas.width / 2, canvas.height / 2 - 120);
 
+    const levelSelected = optionSelection === 0;
     context.font = "20px Arial";
-    context.fillStyle = "white";
-    context.fillText("Start Level", canvas.width / 2, canvas.height / 2 - 20);
+    context.fillStyle = levelSelected ? "white" : "#888";
+    context.fillText("Start Level", canvas.width / 2, canvas.height / 2 - 40);
+    context.font = levelSelected ? "bold 28px Arial" : "24px Arial";
+    context.fillStyle = levelSelected ? "yellow" : "#888";
+    context.fillText("< " + startLevel + " >", canvas.width / 2, canvas.height / 2);
 
-    context.font = "bold 28px Arial";
-    context.fillStyle = "yellow";
-    context.fillText("< " + startLevel + " >", canvas.width / 2, canvas.height / 2 + 20);
+    const ghostSelected = optionSelection === 1;
+    context.font = "20px Arial";
+    context.fillStyle = ghostSelected ? "white" : "#888";
+    context.fillText("Ghost Piece", canvas.width / 2, canvas.height / 2 + 55);
+    context.font = ghostSelected ? "bold 28px Arial" : "24px Arial";
+    context.fillStyle = ghostSelected ? "yellow" : "#888";
+    context.fillText(showGhost ? "ON" : "OFF", canvas.width / 2, canvas.height / 2 + 90);
 
     context.font = "13px Arial";
     context.fillStyle = "#555";
-    context.fillText("Left / Right to change   Escape to go back", canvas.width / 2, canvas.height / 2 + 80);
+    context.fillText("Up / Down to select   Left / Right to change   Escape to go back", canvas.width / 2, canvas.height / 2 + 150);
 
     context.textAlign = "left";
 }
@@ -672,8 +748,8 @@ function gameLoop() {
             const fullRows = playField.checkLines();
             if (fullRows.length > 0) {
                 fullRows.forEach(row => playField.clearLine(row));
-                scoreCounter.addscore(fullRows.length);
             }
+            scoreCounter.addscore(fullRows.length);
 
             const shape = nextPieceShape;
             nextPieceShape = grabBagRandomShape(bag);
@@ -684,8 +760,6 @@ function gameLoop() {
                 gameOver();
                 return;
             }
-            // updateCells must happen AFTER line clears so the new piece
-            // cells are not shifted down by the splice/unshift operations
             currentPiece.updateCells();
             canHold = true;
             playField.drawCells();
@@ -740,8 +814,16 @@ document.addEventListener("keydown", (key) => {
 
     if (gameState === "options") {
         if (key.key === "Escape") gameState = "menu";
-        if (key.key === "ArrowLeft") startLevel = Math.max(1, startLevel - 1);
-        if (key.key === "ArrowRight") startLevel = Math.min(15, startLevel + 1);
+        if (key.key === "ArrowUp") optionSelection = (optionSelection - 1 + 2) % 2;
+        if (key.key === "ArrowDown") optionSelection = (optionSelection + 1) % 2;
+        if (key.key === "ArrowLeft" || key.key === "ArrowRight") {
+            if (optionSelection === 0) {
+                if (key.key === "ArrowLeft") startLevel = Math.max(1, startLevel - 1);
+                if (key.key === "ArrowRight") startLevel = Math.min(15, startLevel + 1);
+            } else if (optionSelection === 1) {
+                showGhost = !showGhost;
+            }
+        }
         return;
     }
 
