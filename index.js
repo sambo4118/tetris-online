@@ -896,8 +896,12 @@ function drawLeaderboard() {
 
 async function fetchLeaderboard() {
     try {
-        const res = await fetch("/api/leaderboard");
-        leaderboardData = await res.json();
+        const res = await fetch("/api/games/tetris-online/leaderboard?limit=10");
+        const data = await res.json();
+        leaderboardData = (data.leaderboard || []).map(entry => ({
+            initials: entry.name.slice(0, 3).toUpperCase(),
+            score: entry.score
+        }));
     } catch {
         leaderboardData = [];
     }
@@ -906,13 +910,16 @@ async function fetchLeaderboard() {
 
 async function submitScore(initials, score) {
     try {
-        const res = await fetch("/api/leaderboard", {
+        const res = await fetch("/api/games/tetris-online/leaderboard", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ initials, score })
+            body: JSON.stringify({ name: initials, score })
         });
         const data = await res.json();
-        leaderboardData = data.leaderboard || [];
+        leaderboardData = (data.leaderboard || []).map(entry => ({
+            initials: entry.name.slice(0, 3).toUpperCase(),
+            score: entry.score
+        }));
     } catch {
         leaderboardData = [];
     }
